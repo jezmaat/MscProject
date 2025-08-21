@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+
+  airflow-init:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    env_file: .env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./gcp-key.json:/opt/airflow/gcp-key.json
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db init &&
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin
+
+  airflow-webserver:
+    build: .
+    restart: always
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Celery
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    env_file: .env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./gcp-key.json:/opt/airflow/gcp-key.json
+    ports:
+      - "8080:8080"
+    command: webserver
+
+  airflow-scheduler:
+    build: .
+    restart: always
+    depends_on:
+      - airflow-webserver
+    env_file: .env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./gcp-key.json:/opt/airflow/gcp-key.json
+    command: scheduler
+
+  airflow-worker:
+    build: .
+    restart: always
+    depends_on:
+      - airflow-webserver
+    env_file: .env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./gcp-key.json:/opt/airflow/gcp-key.json
+    command: celery worker
+
+volumes:
+  postgres_data:
